@@ -1,96 +1,107 @@
-from fastapi import FastAPI, Request
+import logging
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 import openai
-import os
-import httpx
-from dotenv import load_dotenv
-from fastapi.responses import JSONResponse
 
-load_dotenv()
+# 🔐 Вставь свой OpenAI API-ключ
+openai.api_key = ""
 
-app = FastAPI()
+# 🔐 Вставь свой Telegram API-токен
+TELEGRAM_TOKEN = "8012584442:AAH06Upa6h22SrB1mrgFgcrwrPbAy_J0thk"
 
-TELEGRAM_TOKEN = os.getenv("8012584442:AAH06Upa6h22SrB1mrgFgcrwrPbAy_J0thk")
-OPENAI_API_KEY = os.getenv("")
-BOT_API_URL = f"https://api.telegram.org/bot{8012584442:AAH06Upa6h22SrB1mrgFgcrwrPbAy_J0thk}"
+# Логирование
+logging.basicConfig(level=logging.INFO)
 
-openai.api_key = OPENAI_API_KEY
+# Храним, в каком режиме пользователь (ИИ или обычный)
+user_ai_mode = {}
 
-# Функция для общения с OpenAI
-async def ask_ai(prompt: str) -> str:
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        return "❌ Ошибка при обращении к ИИ."
+# Стартовая команда
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_keyboard = [
+        ['🙋‍♀️ Я волонтёр', '🆘 Мне нужна помощь'],
+        ['🤖 Задать вопрос ИИ', '📖 О проекте']
+    ]
+    await update.message.reply_text(
+        "Добро пожаловать в HeartLink 💜\nВыберите, что вам интересно:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
 
-# Функция отправки сообщения в Telegram
-async def send_message(chat_id: int, text: str):
-    async with httpx.AsyncClient() as client:
-        await client.post(f"{BOT_API_URL}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": text
-        })
+# Обработка всех сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text.lower()
 
-# Главный обработчик вебхука
-@app.post("/webhook")
-async def telegram_webhook(req: Request):
-    data = await req.json()
+    # Режим общения с ИИ
+    if user_ai_mode.get(user_id):
+        if 'стоп' in text or 'выход' in text:
+            user_ai_mode[user_id] = False
+            await update.message.reply_text("🔚 Вы вышли из режима общения с ИИ.")
+            return
 
-    message = data.get("message")
-    if not message:
-        return JSONResponse(content={"ok": True})
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": update.message.text}]
+            )
+            await update.message.reply_text(response.choices[0].message.content)
+        except Exception as e:
+            logging.error(e)
+            await update.message.reply_text("❌ Ошибка при обращении к ИИ. Попробуйте позже.")
+        return
 
-    chat_id = message["chat"]["id"]
-    text = message.get("text", "")
-
-    if text == "/start":
-        welcome_text = (
-            "Добро пожаловать в HeartLink 💜\n\n"
-            "Выберите действие:\n"
-            "🙋‍♀️ Я волонтёр\n🆘 Мне нужна помощь\n📖 О проекте\n🤖 Поговорить с ИИ"
-        )
-        await send_message(chat_id, welcome_text)
-
-    elif "волонтёр" in text.lower():
-        reply = (
-            "Спасибо, что выбрали путь добрых дел!\n"
+    # Кнопка: Я волонтёр
+    if 'волонтёр' in text:
+        await update.message.reply_text(
+            "💜 Спасибо, что выбрали путь добрых дел!\n\n"
             "Вы зарегистрировались как волонтёр 💪\n\n"
             "Вместе мы сможем:\n"
             "— помогать тем, кто в этом нуждается,\n"
             "— участвовать в экологических и социальных акциях,\n"
             "— развивать навыки и заводить новых друзей!\n\n"
-            "📋 Заполни форму волонтёра: https://forms.gle/UESqhq5SXRwbYieF6\n"
-            "📢 Следи за событиями: https://t.me/+IOpcx4LXebFjNDk6"
+            "📄 Заполни форму волонтера:\nhttps://forms.gle/UESqhq5SXRwbYieF6\n"
+            "📢 Следи за событиями в Telegram-канале:\nhttps://t.me/+IOpcx4LXebFjNDk6"
         )
-        await send_message(chat_id, reply)
 
-    elif "помощь" in text.lower():
-        reply = (
-            "Спасибо, что выбрали путь добрых дел!\n"
-            "Вы можете задать ваш вопрос в Telegram-канале:\n"
-            "https://t.me/+IOpcx4LXebFjNDk6"
+    # Кнопка: Мне нужна помощь
+    elif 'нужна помощь' in text or 'помощь' in text:
+        await update.message.reply_text(
+            "💜 Спасибо, что выбрали путь добрых дел!\n\n"
+            "Вы можете задать свой вопрос в Telegram-канале:\n"
+            "https://t.me/+IOpcx4LXebFjNDk6\n\n"
+            "📞 Контакты — тот же канал."
         )
-        await send_message(chat_id, reply)
 
-    elif "о проекте" in text.lower():
-        about = (
-            "HeartLink — это приложение, которое делает волонтёрство доступным и понятным для всех.\n\n"
-            "Сегодня многие хотят помогать, но не знают, где найти подходящие мероприятия или с чего начать.\n"
-            "Мы решаем эту проблему: HeartLink подбирает события под твои интересы, упрощает регистрацию и показывает твой вклад.\n"
-            "Больше никаких сложных списков и пропущенных возможностей — всё самое важное всегда под рукой.\n\n"
-            "В приложении есть личный профиль волонтёра, статистика участия и система достижений, которые мотивируют расти и продолжать делать добро.\n\n"
-            "С HeartLink помогать становится проще, удобнее и по-настоящему."
+    # Кнопка: О проекте
+    elif 'о проекте' in text:
+        await update.message.reply_text(
+            "💡 *О проекте HeartLink*\n\n"
+            "HeartLink — это приложение, которое делает волонтёрство доступным и понятным для всех. "
+            "Сегодня многие хотят помогать, но не знают, с чего начать. Мы решаем эту проблему!\n\n"
+            "🔹 HeartLink подбирает события под интересы волонтёра\n"
+            "🔹 Упрощает регистрацию и отслеживает вклад\n"
+            "🔹 Встроен личный профиль с достижениями и статистикой\n\n"
+            "С HeartLink помогать проще, удобнее и вдохновляюще ✨"
         )
-        await send_message(chat_id, about)
 
-    elif "ии" in text.lower() or "🤖" in text:
-        await send_message(chat_id, "Напиши свой вопрос, и я передам его ИИ 💬")
+    # Кнопка: Задать вопрос ИИ
+    elif 'ии' in text or '🤖' in text:
+        user_ai_mode[user_id] = True
+        await update.message.reply_text(
+            "🧠 Можешь задать любой вопрос — я постараюсь помочь!\n\n"
+            "Напиши *«стоп»*, чтобы выйти из режима общения с ИИ."
+        )
 
+    # Любой другой текст
     else:
-        ai_response = await ask_ai(text)
-        await send_message(chat_id, ai_response)
+        await update.message.reply_text("Выберите вариант из меню или нажмите /start.")
 
-    return JSONResponse(content={"ok": True})
+# Запуск
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("🤖 Бот запущен!")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
